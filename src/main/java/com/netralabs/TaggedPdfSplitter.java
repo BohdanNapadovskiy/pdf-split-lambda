@@ -33,8 +33,8 @@ public class TaggedPdfSplitter {
 //      }
 
       int totalPages = inputPdf.getNumberOfPages();
-      if (totalPages <= 1) {
-        return new SplitResult("error", "Cannot split a file with only one page.", inputFilePath, null);
+      if (totalPages < 1) {
+        return new SplitResult("error", "Invalid PDF: no pages found.", inputFilePath, null);
       }
 
       Path outDir = Paths.get(outputDir);

@@ -34,7 +34,7 @@ public class PdfSplitter implements RequestHandler<Map<String, String>, Map<Stri
 
     EventRequest eventRequest = parseEventRequest(input, response);
     if (eventRequest == null) {
-      return response; // error already populated
+      return response;
     }
     logger.info("Event request: splitRange={}, bucket={}, folder={}, file={}", eventRequest.getSplitRange(), eventRequest.getBucketName(), eventRequest.getFolderName(), eventRequest.getFileName());
 
@@ -65,7 +65,21 @@ public class PdfSplitter implements RequestHandler<Map<String, String>, Map<Stri
 
     // 7) Split and upload
     Path localOutputDir = prepareLocalOutputDir(tempDir, baseName);
-    SplitResult splitResult = performSplit(localInputPath, eventRequest.getSplitRange(), localOutputDir, baseName);
+
+    Long maxBytes = resolveMaxBytes(input);
+    SplitResult splitResult;
+    if (maxBytes != null) {
+      // size-capped mode
+      PdfSizeCappedSplitter sizeSplitter = new PdfSizeCappedSplitter();
+      splitResult = sizeSplitter.splitByMaxBytes(
+          localInputPath.toString(),
+          maxBytes,
+          localOutputDir.toString(),
+          baseName);
+    } else {
+      splitResult = performSplit(localInputPath, eventRequest.getSplitRange(), localOutputDir, baseName);
+    }
+
     response.put("status", splitResult.getStatus());
     response.put("message", splitResult.getMessage());
     if (!"success".equals(splitResult.getStatus())) {
@@ -224,5 +238,16 @@ public class PdfSplitter implements RequestHandler<Map<String, String>, Map<Stri
     try (PdfDocument doc = new PdfDocument(new PdfReader(pdfPath.toString()))) {
       return doc.getNumberOfPages();
     }
+  }
+
+  private Long resolveMaxBytes(Map<String, String> input) {
+    String maxMbStr = input.get("max_mb");
+    if (maxMbStr != null && !maxMbStr.isBlank()) {
+      try {
+        long mb = Long.parseLong(maxMbStr.trim());
+        return mb > 0 ? mb * 1024L * 1024L : null;
+      } catch (NumberFormatException ignored) {}
+    }
+    return null;
   }
 }
