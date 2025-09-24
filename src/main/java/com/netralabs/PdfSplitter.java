@@ -80,17 +80,17 @@ public class PdfSplitter implements RequestHandler<Map<String, String>, Map<Stri
       splitResult = performSplit(localInputPath, eventRequest.getSplitRange(), localOutputDir, baseName);
     }
 
-    response.put("status", splitResult.getStatus());
     response.put("message", splitResult.getMessage());
     if (!"success".equals(splitResult.getStatus())) {
+      response.put("error", true);
       return response;
     }
 
     String outputS3Folder = buildOutputFolder(eventRequest.getFolderName(), baseName + "_tagged_split");
     List<String> uploadedKeys = uploadAll(eventRequest, outputS3Folder, splitResult.getGeneratedFiles());
 
-    response.put("output_folder", outputS3Folder);
-    response.put("generated_files", uploadedKeys);
+    // On success, only return message and error=false per requirements
+    response.put("error", false);
     return response;
   }
 
@@ -99,7 +99,7 @@ public class PdfSplitter implements RequestHandler<Map<String, String>, Map<Stri
       return new EventRequest(input);
     } catch (NumberFormatException nfe) {
       logger.error("Invalid split_range provided: {}", input.get("split_range"));
-      response.put("status", "error");
+      response.put("error", true);
       response.put("message", "Invalid split_range: must be an integer >= 1");
       return null;
     }
@@ -108,7 +108,7 @@ public class PdfSplitter implements RequestHandler<Map<String, String>, Map<Stri
   private boolean validateEventRequestAndRespond(EventRequest eventRequest, Map<String, Object> response) {
     String validationError = validateEventRequest(eventRequest);
     if (validationError != null) {
-      response.put("status", "error");
+      response.put("error", true);
       response.put("message", validationError);
       return false;
     }
@@ -120,7 +120,7 @@ public class PdfSplitter implements RequestHandler<Map<String, String>, Map<Stri
       return getSourceObject(eventRequest);
     } catch (Exception e) {
       logger.error("Error getting object from S3: {}", e.getMessage(), e);
-      response.put("status", "error");
+      response.put("error", true);
       response.put("message", e.getMessage());
       return null;
     }
@@ -131,7 +131,7 @@ public class PdfSplitter implements RequestHandler<Map<String, String>, Map<Stri
       return createTempDir();
     } catch (IOException e) {
       logger.error("Failed to create temp directory: {}", e.getMessage(), e);
-      response.put("status", "error");
+      response.put("error", true);
       response.put("message", "Failed to create temp directory");
       return null;
     }
@@ -142,7 +142,7 @@ public class PdfSplitter implements RequestHandler<Map<String, String>, Map<Stri
       return downloadToTemp(s3Object, tempDir, originalFileName);
     } catch (IOException e) {
       logger.error("Failed to download S3 object to temp file: {}", e.getMessage(), e);
-      response.put("status", "error");
+      response.put("error", true);
       response.put("message", "Failed to download source PDF");
       return null;
     }
@@ -152,7 +152,7 @@ public class PdfSplitter implements RequestHandler<Map<String, String>, Map<Stri
     try {
       int totalPages = getPdfPageCount(localInputPath);
       if (totalPages <= 0) {
-        response.put("status", "error");
+        response.put("error", true);
         response.put("message", "Invalid PDF: could not determine number of pages");
         return false;
       }
@@ -162,7 +162,7 @@ public class PdfSplitter implements RequestHandler<Map<String, String>, Map<Stri
       return true;
     } catch (IOException e) {
       logger.error("Failed to read PDF for page count: {}", e.getMessage(), e);
-      response.put("status", "error");
+      response.put("error", true);
       response.put("message", "Failed to read PDF for page count");
       return false;
     }
