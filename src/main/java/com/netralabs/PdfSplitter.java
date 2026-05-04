@@ -21,7 +21,7 @@ import java.util.Map;
 public class PdfSplitter implements RequestHandler<Map<String, String>, Map<String, Object>> {
 
   private static final Logger logger = LoggerFactory.getLogger(PdfSplitter.class);
-  private static final long DEFAULT_MAX_BYTES = 80L * 1024 * 1024;
+  private static final long DEFAULT_MAX_BYTES = 80L * 1000 * 1000;
 
   private final PdfSizeCappedSplitter sizeCappedSplitter = new PdfSizeCappedSplitter();
   private final AWSS3Client s3Client = new AWSS3Client();
@@ -193,7 +193,7 @@ public class PdfSplitter implements RequestHandler<Map<String, String>, Map<Stri
     if (maxMbStr != null && !maxMbStr.isBlank()) {
       try {
         long mb = Long.parseLong(maxMbStr.trim());
-        if (mb > 0) return mb * 1024L * 1024L;
+        if (mb > 0) return mb * 1000L * 1000L;
       } catch (NumberFormatException ignored) {}
     }
     return DEFAULT_MAX_BYTES;

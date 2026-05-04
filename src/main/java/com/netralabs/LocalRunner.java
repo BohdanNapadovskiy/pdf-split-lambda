@@ -9,7 +9,7 @@ import java.nio.file.Paths;
 public class LocalRunner {
 
   // ---- Edit these for local runs ----
-  private static final String INPUT_FILE = "C:\\projects\\pdf\\NMFS_RepCong_fish-vessel-reg_1996_AOD.pdf";
+  private static final String INPUT_FILE = "C:\\projects\\pdf\\2024 Brantford OSIMs Summary Report-FINAL_AOD.pdf";
   private static final String OUTPUT_DIR = "C:\\projects\\pdf\\data\\";   // empty = <input-dir>/<basename>_split
   private static final int MAX_MB = 80;
   // -----------------------------------
@@ -31,7 +31,7 @@ public class LocalRunner {
         : Paths.get(OUTPUT_DIR).toAbsolutePath();
     Files.createDirectories(outputDir);
 
-    long maxBytes = MAX_MB * 1024L * 1024L;
+    long maxBytes = MAX_MB * 1000L * 1000L;
     SplitResult result = new PdfSizeCappedSplitter().splitByMaxBytes(
         inputPath.toString(), maxBytes, outputDir.toString(), baseName);
 
