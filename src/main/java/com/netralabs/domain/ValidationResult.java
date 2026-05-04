@@ -13,6 +13,7 @@ public class ValidationResult {
   public ValidationResult(boolean ok, String message, long bytes) {
     this.ok = ok; this.message = message; this.bytes = bytes;
   }
+
   public static ValidationResult ok(long bytes) { return new ValidationResult(true, "OK", bytes); }
   public static ValidationResult fail(String msg, long bytes) { return new ValidationResult(false, msg, bytes); }
 }

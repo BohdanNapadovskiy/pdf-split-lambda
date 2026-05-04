@@ -80,11 +80,7 @@ public class PdfSizeCappedSplitter {
 
   private byte[] renderRange(PdfDocument inputPdf, int start, int end) throws IOException {
     ByteArrayOutputStream baos = new ByteArrayOutputStream(64 * 1024);
-    WriterProperties wp = new WriterProperties()
-        .setFullCompressionMode(true)
-        .useSmartMode()
-        .setCompressionLevel(9);
-    try (PdfWriter writer = new PdfWriter(baos, wp);
+    try (PdfWriter writer = new PdfWriter(baos, new WriterProperties());
          PdfDocument out = new PdfDocument(writer)) {
       // preserve tagged + Lang + viewer prefs like your current splitter
       out.setTagged();

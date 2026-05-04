@@ -3,8 +3,6 @@ package com.netralabs;
 import com.amazonaws.services.lambda.runtime.Context;
 import com.amazonaws.services.lambda.runtime.RequestHandler;
 import com.amazonaws.services.s3.model.S3Object;
-import com.itextpdf.kernel.pdf.PdfDocument;
-import com.itextpdf.kernel.pdf.PdfReader;
 import com.netralabs.domain.EventRequest;
 import com.netralabs.domain.SplitResult;
 import org.slf4j.Logger;
@@ -16,16 +14,16 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 
 public class PdfSplitter implements RequestHandler<Map<String, String>, Map<String, Object>> {
 
   private static final Logger logger = LoggerFactory.getLogger(PdfSplitter.class);
-  private final TaggedPdfSplitter taggedPdfSplitter = new TaggedPdfSplitter();
+  private static final long DEFAULT_MAX_BYTES = 80L * 1024 * 1024;
+
+  private final PdfSizeCappedSplitter sizeCappedSplitter = new PdfSizeCappedSplitter();
   private final AWSS3Client s3Client = new AWSS3Client();
 
   @Override
@@ -36,7 +34,7 @@ public class PdfSplitter implements RequestHandler<Map<String, String>, Map<Stri
     if (eventRequest == null) {
       return response;
     }
-    logger.info("Event request: splitRange={}, bucket={}, folder={}, file={}", eventRequest.getSplitRange(), eventRequest.getBucketName(), eventRequest.getFolderName(), eventRequest.getFileName());
+    logger.info("Event request: bucket={}, folder={}, file={}", eventRequest.getBucketName(), eventRequest.getFolderName(), eventRequest.getFileName());
 
     if (!validateEventRequestAndRespond(eventRequest, response)) {
       return response;
@@ -59,26 +57,13 @@ public class PdfSplitter implements RequestHandler<Map<String, String>, Map<Stri
       return response;
     }
 
-    if (!validateSplitRangeAgainstPdf(localInputPath, eventRequest.getSplitRange(), response)) {
-      return response;
-    }
-
-    // 7) Split and upload
     Path localOutputDir = prepareLocalOutputDir(tempDir, baseName);
-
-    Long maxBytes = resolveMaxBytes(input);
-    SplitResult splitResult;
-    if (maxBytes != null) {
-      // size-capped mode
-      PdfSizeCappedSplitter sizeSplitter = new PdfSizeCappedSplitter();
-      splitResult = sizeSplitter.splitByMaxBytes(
-          localInputPath.toString(),
-          maxBytes,
-          localOutputDir.toString(),
-          baseName);
-    } else {
-      splitResult = performSplit(localInputPath, eventRequest.getSplitRange(), localOutputDir, baseName);
-    }
+    long maxBytes = resolveMaxBytes(input);
+    SplitResult splitResult = sizeCappedSplitter.splitByMaxBytes(
+        localInputPath.toString(),
+        maxBytes,
+        localOutputDir.toString(),
+        baseName);
 
     response.put("message", splitResult.getMessage());
     if (!"success".equals(splitResult.getStatus())) {
@@ -86,10 +71,9 @@ public class PdfSplitter implements RequestHandler<Map<String, String>, Map<Stri
       return response;
     }
 
-    String outputS3Folder = buildOutputFolder(eventRequest.getFolderName(), baseName + "_tagged_split");
-    List<String> uploadedKeys = uploadAll(eventRequest, outputS3Folder, splitResult.getGeneratedFiles());
+    String outputS3Folder = buildOutputFolder(eventRequest.getFolderName(), baseName + "_split");
+    uploadAll(eventRequest, outputS3Folder, splitResult.getGeneratedFiles());
 
-    // On success, only return message and error=false per requirements
     response.put("error", false);
     return response;
   }
@@ -97,10 +81,10 @@ public class PdfSplitter implements RequestHandler<Map<String, String>, Map<Stri
   private EventRequest parseEventRequest(Map<String, String> input, Map<String, Object> response) {
     try {
       return new EventRequest(input);
-    } catch (NumberFormatException nfe) {
-      logger.error("Invalid split_range provided: {}", input.get("split_range"));
+    } catch (Exception e) {
+      logger.error("Failed to parse event request: {}", e.getMessage(), e);
       response.put("error", true);
-      response.put("message", "Invalid split_range: must be an integer >= 1");
+      response.put("message", "Invalid request: " + e.getMessage());
       return null;
     }
   }
@@ -148,32 +132,11 @@ public class PdfSplitter implements RequestHandler<Map<String, String>, Map<Stri
     }
   }
 
-  private boolean validateSplitRangeAgainstPdf(Path localInputPath, int splitRange, Map<String, Object> response) {
-    try {
-      int totalPages = getPdfPageCount(localInputPath);
-      if (totalPages <= 0) {
-        response.put("error", true);
-        response.put("message", "Invalid PDF: could not determine number of pages");
-        return false;
-      }
-      if (splitRange > totalPages) {
-        logger.info("split_range ({}) exceeds total pages ({}). Proceeding to output a single file with all pages.", splitRange, totalPages);
-      }
-      return true;
-    } catch (IOException e) {
-      logger.error("Failed to read PDF for page count: {}", e.getMessage(), e);
-      response.put("error", true);
-      response.put("message", "Failed to read PDF for page count");
-      return false;
-    }
-  }
-
   private S3Object getSourceObject(EventRequest eventRequest) throws Exception {
     return s3Client.getObject(eventRequest.getBucketName(), eventRequest.getFolderName(), eventRequest.getFileName());
   }
 
   private Path createTempDir() throws IOException {
-
     return Files.createTempDirectory("pdfsplit_");
   }
 
@@ -190,20 +153,14 @@ public class PdfSplitter implements RequestHandler<Map<String, String>, Map<Stri
   }
 
   private Path prepareLocalOutputDir(Path tempDir, String baseName) {
-    return tempDir.resolve(baseName + "_tagged_split");
+    return tempDir.resolve(baseName + "_split");
   }
 
-  private SplitResult performSplit(Path localInputPath, int splitRange, Path localOutputDir, String baseName) {
-    return taggedPdfSplitter.splitTaggedPdf(localInputPath.toString(), splitRange, localOutputDir.toString(), baseName);
-  }
-
-  private List<String> uploadAll(EventRequest eventRequest, String outputS3Folder, List<String> localPaths) {
-    return localPaths.stream().map(path -> {
+  private void uploadAll(EventRequest eventRequest, String outputS3Folder, List<String> localPaths) {
+    for (String path : localPaths) {
       File f = new File(path);
-      String keyName = f.getName();
-      s3Client.uploadFile(eventRequest.getBucketName(), outputS3Folder, keyName, f);
-      return s3Client.buildKey(outputS3Folder, keyName);
-    }).collect(Collectors.toList());
+      s3Client.uploadFile(eventRequest.getBucketName(), outputS3Folder, f.getName(), f);
+    }
   }
 
   private String stripPdfExtension(String fileName) {
@@ -228,26 +185,17 @@ public class PdfSplitter implements RequestHandler<Map<String, String>, Map<Stri
     if (req.getFileName() == null || req.getFileName().trim().isEmpty()) {
       return "file_name is required";
     }
-    if (req.getSplitRange() < 1) {
-      return "split_range must be 1 or greater";
-    }
     return null;
   }
 
-  private int getPdfPageCount(Path pdfPath) throws IOException {
-    try (PdfDocument doc = new PdfDocument(new PdfReader(pdfPath.toString()))) {
-      return doc.getNumberOfPages();
-    }
-  }
-
-  private Long resolveMaxBytes(Map<String, String> input) {
+  private long resolveMaxBytes(Map<String, String> input) {
     String maxMbStr = input.get("max_mb");
     if (maxMbStr != null && !maxMbStr.isBlank()) {
       try {
         long mb = Long.parseLong(maxMbStr.trim());
-        return mb > 0 ? mb * 1024L * 1024L : null;
+        if (mb > 0) return mb * 1024L * 1024L;
       } catch (NumberFormatException ignored) {}
     }
-    return null;
+    return DEFAULT_MAX_BYTES;
   }
 }
